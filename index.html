@@ -41,6 +41,12 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 .badge-status.belum{background:#fdeaea;color:var(--brand);}
 .badge-status.sudah{background:#e3f5ea;color:#1d7a4d;}
 .badge-status.kosong{display:none}
+/* [BARU] Backup reminder banner — persisten sampai user backup, bukan toast sekejap */
+.backup-banner{display:flex;align-items:center;gap:8px;background:#FCEFC7;border:1px solid #EBD79A;color:#7A5A12;font-size:11.5px;font-weight:500;padding:10px 12px;border-radius:10px;margin-bottom:14px;cursor:pointer;transition:border-color .15s ease;}
+.backup-banner:hover{border-color:var(--gold-deep)}
+.backup-banner i{font-size:14px;flex-shrink:0}
+.backup-banner span#backup-banner-text{flex:1;line-height:1.4}
+.backup-banner .backup-banner-arrow{font-size:13px;opacity:.6}
 /* Hero */
 .hero{background:var(--brand);color:#fff;border-radius:var(--radius);padding:16px 18px 16px;margin-bottom:14px;position:relative;overflow:hidden;}
 .hero::after{content:"";position:absolute;right:-40px;top:-40px;width:160px;height:160px;background:radial-gradient(circle,rgba(255,255,255,0.06),transparent 70%);}
@@ -198,6 +204,13 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 <div class="status-bar">
   <div class="badge-status kosong" id="badge-export-excel"></div>
   <div class="badge-status kosong" id="badge-export-wa"></div>
+</div>
+
+<!-- [BARU] Banner reminder backup — persisten, tidak hilang sendiri seperti toast -->
+<div class="backup-banner" id="backup-banner" style="display:none" onclick="bukaPin('setting')" role="button" tabindex="0">
+  <i class="fi fi-rr-cloud-download"></i>
+  <span id="backup-banner-text"></span>
+  <i class="fi fi-rr-angle-small-right backup-banner-arrow"></i>
 </div>
 
 <div class="hero">
@@ -411,6 +424,15 @@ const RIWAYAT_PETUGAS_KEY='RO_CD_riwayat_petugas';
 const LAST_BACKUP_KEY='RO_CD_last_backup';
 const BACKUP_REMINDER_HARI=7;
 const ARSIP_PREFIX='RO_CD_arsip_';
+// [BARU] Statistik nominal historis — untuk validasi nominal wajar
+const STAT_NOMINAL_KEY='RO_CD_stat_nominal';
+const NOMINAL_MULTIPLIER=5;   // ambang: nominal dianggap "tidak wajar" jika > 5x rata-rata historis
+const NOMINAL_MIN_SAMPLE=5;   // minimal 5 data historis dulu sebelum validasi ini aktif (hindari false alarm di awal)
+
+// [BARU] Cache saldo awal — dihitung sekali per sesi, bukan di-scan ulang setiap render.
+// Saldo awal hanya berubah saat arsip berubah (ganti hari / restore / hapus semua),
+// jadi cache ini diinvalidasi hanya di titik-titik itu, bukan setiap submit/edit/hapus entry.
+let _cacheSaldoAwal=null;
 
 /* ========== STORAGE ========== */
 function saveState(){
@@ -484,7 +506,10 @@ function getAllArsipKeys(){
 }
 
 /* ========== [BARU] SALDO AWAL DARI ARSIP ========== */
-function getSaldoAwalHariIni(){
+// Implementasi asli — full-scan seluruh arsip. Tetap ada, tapi sekarang
+// hanya dipanggil lewat getSaldoAwalHariIni() di bawah (lapisan cache),
+// bukan dipanggil langsung di setiap render.
+function hitungSaldoAwalHariIni(){
   // Cari arsip hari terakhir yang ada datanya (support libur beberapa hari)
   const keys=getAllArsipKeys().sort().reverse();
   for(const k of keys){
@@ -498,6 +523,17 @@ function getSaldoAwalHariIni(){
     }catch(e){}
   }
   return {saldo:0,tanggal:null};
+}
+// [BARU] Lapisan cache — saldo awal hari ini tidak berubah selama hari belum
+// ganti dan arsip belum disentuh, jadi tidak perlu di-scan ulang tiap kali
+// updateSummary()/shareWA()/downloadXLSX() dipanggil (mis. setiap submit entry).
+function getSaldoAwalHariIni(){
+  if(_cacheSaldoAwal===null)_cacheSaldoAwal=hitungSaldoAwalHariIni();
+  return _cacheSaldoAwal;
+}
+// Panggil ini setiap kali arsip berubah: ganti hari otomatis, restore backup, hapus semua data.
+function invalidateCacheSaldoAwal(){
+  _cacheSaldoAwal=null;
 }
 
 /* ========== KALKULASI ========== */
@@ -537,6 +573,7 @@ function updateSummary(){
 
   updateBadgeExport();
   updateWANomor();
+  updateBackupReminder(); // [BARU]
 }
 
 /* ========== BADGE STATUS EXPORT ========== */
@@ -600,6 +637,51 @@ function renderList(){
   `).join('');
 }
 
+/* ========== [BARU] VALIDASI NOMINAL WAJAR ========== */
+// Statistik rata-rata nominal historis — debit & kredit dihitung terpisah karena
+// skalanya biasanya beda (debit = belanja/pengeluaran, kredit = setoran/pemasukan).
+// Disimpan sebagai running sum+count supaya update per entry O(1), tidak perlu
+// scan ulang seluruh arsip setiap submit (selaras dengan prinsip cache saldo awal di atas).
+function getStatNominal(){
+  try{
+    const raw=localStorage.getItem(STAT_NOMINAL_KEY);
+    if(raw)return JSON.parse(raw);
+  }catch(e){}
+  // Bootstrap sekali dari data yang sudah ada (arsip + hari ini) — hanya terjadi
+  // saat key belum pernah dibuat (instalasi lama yang baru update, atau habis restore).
+  const stat={debit:{count:0,sum:0},kredit:{count:0,sum:0}};
+  const semua=[...entries];
+  getAllArsipKeys().forEach(k=>{
+    try{
+      const d=JSON.parse(localStorage.getItem(k));
+      if(d&&Array.isArray(d.entries))semua.push(...d.entries);
+    }catch(e){}
+  });
+  semua.forEach(e=>{
+    if(e.debit>0){stat.debit.count++;stat.debit.sum+=e.debit;}
+    if(e.kredit>0){stat.kredit.count++;stat.kredit.sum+=e.kredit;}
+  });
+  try{localStorage.setItem(STAT_NOMINAL_KEY,JSON.stringify(stat));}catch(e){}
+  return stat;
+}
+function updateStatNominal(deb,kre){
+  const stat=getStatNominal();
+  if(deb>0){stat.debit.count++;stat.debit.sum+=deb;}
+  if(kre>0){stat.kredit.count++;stat.kredit.sum+=kre;}
+  try{localStorage.setItem(STAT_NOMINAL_KEY,JSON.stringify(stat));}catch(e){}
+}
+// true = boleh lanjut simpan. false = user membatalkan setelah lihat peringatan.
+function cekNominalWajar(jenis,nilai){
+  if(!(nilai>0))return true;
+  const stat=getStatNominal();
+  const s=stat[jenis];
+  if(!s||s.count<NOMINAL_MIN_SAMPLE)return true; // data historis belum cukup, jangan ganggu
+  const rata=s.sum/s.count;
+  if(rata<=0||nilai<=rata*NOMINAL_MULTIPLIER)return true;
+  const label=jenis==='debit'?'Debit':'Kredit';
+  return confirm(`Nominal ${label} ${fmtRp(nilai)} jauh di atas rata-rata historis (${fmtRp(Math.round(rata))}).\nCek lagi — yakin nominalnya benar?\n\nOK = tetap simpan, Batal = koreksi nominal.`);
+}
+
 /* ========== FORM ========== */
 function submitEntry(){
   const subj=document.getElementById('f-subject').value.trim();
@@ -611,12 +693,16 @@ function submitEntry(){
   const tgl=todayStr;
   if(deb>0&&kre>0){alert('Debit dan Kredit tidak boleh keduanya terisi pada satu entry yang sama. Pilih salah satu.');return;}
   if(!subj&&!det){alert('Mohon isi minimal Subject atau Detail.');return;}
+  // [BARU] validasi nominal wajar — berlaku untuk entry baru maupun edit
+  if(!cekNominalWajar('debit',deb))return;
+  if(!cekNominalWajar('kredit',kre))return;
   if(editId!==null){
     const idx=entries.findIndex(e=>e.id===editId);
     if(idx>-1)entries[idx]={...entries[idx],tanggal:tgl,subject:subj,detail:det,ket,debit:deb,kredit:kre,petugas:pet};
     exitEditMode();
   } else {
     entries.push({id:idCounter++,tanggal:tgl,subject:subj,detail:det,ket,debit:deb,kredit:kre,petugas:pet,saldo:0});
+    updateStatNominal(deb,kre); // [BARU] statistik hanya dihitung dari entry baru, bukan revisi, agar tidak dobel-hitung
   }
   exportedExcel=false;exportedWA=false;
   tambahRiwayatTerm(RIWAYAT_SUBJECT_KEY,subj);
@@ -692,21 +778,31 @@ function autoArsipkanJikaGantiHari(){
   const jumlah=entries.length;
   entries=[];idCounter=1;exportedExcel=false;exportedWA=false;
   saveState();
+  invalidateCacheSaldoAwal(); // [BARU] arsip baru terbentuk -> saldo awal hari ini berubah
   toast(`Hari baru terdeteksi — ${jumlah} entry tanggal ${tglData} diarsipkan otomatis.`);
 }
 
-/* ========== REMINDER BACKUP ========== */
-function cekReminderBackup(){
-  const last=localStorage.getItem(LAST_BACKUP_KEY);
+/* ========== [DIUBAH] REMINDER BACKUP — banner persisten, bukan toast sekejap ========== */
+// Dipanggil setiap updateSummary() agar selalu sinkron dengan kondisi terkini,
+// dan langsung setelah backupJSON() berhasil agar banner hilang tanpa nunggu render lain.
+function updateBackupReminder(){
+  const el=document.getElementById('backup-banner');
+  const txt=document.getElementById('backup-banner-text');
+  if(!el||!txt)return;
   const adaData=entries.length||getAllArsipKeys().length;
-  if(!adaData)return;
+  if(!adaData){el.style.display='none';return;}
+  const last=localStorage.getItem(LAST_BACKUP_KEY);
   if(!last){
-    toast('Belum pernah backup data — disarankan backup lewat Pengaturan ⚙');
+    el.style.display='flex';
+    txt.textContent='Belum pernah backup data — tap untuk backup sekarang';
     return;
   }
   const hariBerlalu=Math.floor((Date.now()-Number(last))/86400000);
   if(hariBerlalu>=BACKUP_REMINDER_HARI){
-    toast(`Sudah ${hariBerlalu} hari sejak backup terakhir — disarankan backup lagi lewat Pengaturan ⚙`);
+    el.style.display='flex';
+    txt.textContent=`Backup terakhir ${hariBerlalu} hari lalu — tap untuk backup sekarang`;
+  } else {
+    el.style.display='none';
   }
 }
 
@@ -836,6 +932,7 @@ function backupJSON(){
   const a=document.createElement('a');
   a.href=url;a.download=`backup_RO_CD_${todayStr}.json`;a.click();URL.revokeObjectURL(url);
   localStorage.setItem(LAST_BACKUP_KEY,Date.now().toString());
+  updateBackupReminder(); // [BARU] banner hilang langsung, tidak nunggu render lain
   toast(`Backup diunduh (${total} hari)`);
 }
 
@@ -860,6 +957,12 @@ function restoreJSON(event){
         calcSaldo();updateSummary();renderList();saveState();
         restored++;
       }
+      if(restored>0){
+        // [BARU] arsip berubah -> saldo awal & statistik nominal harus dihitung ulang dari data terbaru
+        invalidateCacheSaldoAwal();
+        localStorage.removeItem(STAT_NOMINAL_KEY);
+        calcSaldo();updateSummary();renderList();
+      }
       event.target.value='';
       toast(`Restore selesai: ${restored} data dipulihkan`);
     }catch(err){toast('Gagal baca file: '+err.message);event.target.value='';}
@@ -874,7 +977,9 @@ function hapusSemuaData(){
   if(!confirm(`Hapus SEMUA data (${total} hari)?\nPastikan sudah backup terlebih dahulu.\n\nTidak bisa dibatalkan.`))return;
   arsipKeys.forEach(k=>localStorage.removeItem(k));
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(STAT_NOMINAL_KEY); // [BARU] statistik nominal ikut direset
   entries=[];idCounter=1;exportedExcel=false;exportedWA=false;
+  invalidateCacheSaldoAwal(); // [BARU]
   calcSaldo();updateSummary();renderList();
   toast('Semua data dihapus');
 }
@@ -1165,9 +1270,8 @@ function toast(msg){
 loadState();
 autoArsipkanJikaGantiHari();
 calcSaldo();
-updateSummary();
+updateSummary(); // [DIUBAH] updateSummary() kini juga memanggil updateBackupReminder() di dalamnya
 renderList();
 muatSemuaDatalist();
-setTimeout(cekReminderBackup,1500);
 </script>
 </html>
