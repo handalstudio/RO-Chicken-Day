@@ -85,6 +85,16 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 .field:last-of-type{margin-bottom:0}
 .field label{font-size:10.5px;letter-spacing:0.04em;text-transform:uppercase;color:var(--ink-soft);font-weight:600;display:block;margin-bottom:6px}
 .field input,.field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink);font-family:inherit;transition:border-color .15s ease;}
+/* [BARU] Tampilan input yang dinonaktifkan (mis. Kredit ikut terkunci saat Debit sudah diisi) */
+.field input:disabled{background:var(--paper);color:var(--ink-faint);cursor:not-allowed;}
+/* [BARU] Pill pilihan Petugas — daftar tertutup, satu tap langsung terpilih */
+.petugas-pills{display:flex;gap:8px;flex-wrap:wrap}
+.petugas-pill{font-size:13px;font-weight:600;padding:9px 16px;border-radius:999px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink-soft);font-family:inherit;transition:all .15s ease;}
+.petugas-pill:hover{border-color:var(--brand)}
+.petugas-pill.aktif{background:var(--brand);color:#fff;border-color:var(--brand)}
+.petugas-empty{font-size:12.5px;color:var(--ink-soft);line-height:1.5;background:#FCEFC7;border:1px solid #EBD79A;border-radius:8px;padding:10px 12px;}
+/* [BARU] Hint generik untuk menjelaskan kenapa sebuah tombol nonaktif (pola sama dengan .wa-locked-hint) */
+.field-hint{font-size:11px;color:var(--brand);margin-top:9px;text-align:center}
 .field input:focus,.field textarea:focus{outline:none;border-color:var(--brand)}
 .field input::placeholder,.field textarea::placeholder{color:var(--ink-faint);opacity:.5}
 .field textarea{resize:none;height:54px;line-height:1.4}
@@ -285,19 +295,21 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
   <div class="field pair">
     <div>
       <label>Debit (Rp)</label>
-      <input type="text" id="f-debit" placeholder="0" inputmode="numeric" oninput="formatRibuan(this)">
+      <input type="text" id="f-debit" placeholder="0" inputmode="numeric" oninput="formatRibuan(this);syncDebitKredit()">
     </div>
     <div>
       <label>Kredit (Rp)</label>
-      <input type="text" id="f-kredit" placeholder="0" inputmode="numeric" oninput="formatRibuan(this)">
+      <input type="text" id="f-kredit" placeholder="0" inputmode="numeric" oninput="formatRibuan(this);syncDebitKredit()">
     </div>
   </div>
+  <!-- [DIUBAH] Petugas: dari free-text+datalist menjadi pill pilihan (daftar tertutup).
+       Daftar nama dikelola lewat panel Pengaturan, bukan diketik bebas di sini lagi. -->
   <div class="field">
     <label>Petugas</label>
-    <input type="text" id="f-petugas" placeholder="Nama petugas" list="dl-petugas">
-    <datalist id="dl-petugas"></datalist>
+    <div class="petugas-pills" id="petugas-pills"></div>
   </div>
-  <button class="btn btn-primary" onclick="submitEntry()"><i class="fi fi-rr-check"></i> <span id="btn-label">Simpan Entry</span></button>
+  <button class="btn btn-primary" id="btn-simpan" onclick="submitEntry()"><i class="fi fi-rr-check"></i> <span id="btn-label">Simpan Entry</span></button>
+  <div class="field-hint" id="petugas-hint" style="display:none">Pilih atau daftarkan nama Petugas dulu lewat Pengaturan</div>
   <button class="btn btn-ghost" id="btn-cancel" style="display:none" onclick="cancelEdit()"><i class="fi fi-rr-cross-small"></i> Batal Revisi</button>
 </div>
 
@@ -397,6 +409,18 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
       <h3><i class="fi fi-rr-settings"></i> Pengaturan</h3>
       <button class="panel-close" onclick="tutupPanel()"><i class="fi fi-rr-cross-small"></i></button>
     </div>
+    <!-- [BARU] Daftar Petugas — daftar tertutup, dikelola di sini. Minimal 1 nama wajib
+         ada sebelum entry apa pun bisa disimpan (lihat updateBtnSimpanState). -->
+    <div class="panel-section">
+      <h4><i class="fi fi-rr-users"></i> Daftar Petugas</h4>
+      <p>Nama di sini muncul sebagai pilihan cepat di form Input Transaksi. Minimal satu nama harus didaftarkan sebelum entry bisa disimpan. Menghapus nama dari sini tidak mengubah entry lama yang sudah memakai nama itu.</p>
+      <div class="panel-input-row">
+        <input type="text" id="input-petugas-baru" placeholder="Nama petugas baru" onkeydown="if(event.key==='Enter')tambahPetugas()">
+        <button class="panel-btn panel-btn-primary" onclick="tambahPetugas()">Tambah</button>
+      </div>
+      <div class="panel-status" id="status-petugas"></div>
+      <div id="list-petugas-kelola" style="margin-top:10px"></div>
+    </div>
     <div class="panel-section">
       <h4><i class="fi fi-rr-mobile-notch"></i> Nomor WA Admin Pusat</h4>
       <p>Digunakan untuk tombol kirim WhatsApp. Format: angka saja, awali dengan kode negara.<br><small style="color:var(--ink-faint)">Contoh: 6281234567890</small></p>
@@ -465,6 +489,7 @@ let deleteId=null;
 let idCounter=1;
 let exportedExcel=false;
 let exportedWA=false;
+let selectedPetugas=''; // [BARU] state pilihan pill Petugas (pengganti nilai f-petugas yang sudah dihapus)
 
 const STORAGE_KEY='RO_CD_hari_ini';
 const PIN_KEY='RO_CD_pin';
@@ -473,7 +498,7 @@ const OUTLET_KEY='RO_CD_outlet';
 const RIWAYAT_SUBJECT_KEY='RO_CD_riwayat_subject';
 const RIWAYAT_DETAIL_KEY='RO_CD_riwayat_detail';
 const RIWAYAT_KET_KEY='RO_CD_riwayat_ket'; // [BARU]
-const RIWAYAT_PETUGAS_KEY='RO_CD_riwayat_petugas';
+const PETUGAS_LIST_KEY='RO_CD_petugas_list'; // [BARU] daftar tertutup nama petugas, dikelola lewat Pengaturan
 const LAST_BACKUP_KEY='RO_CD_last_backup';
 const BACKUP_REMINDER_HARI=7;
 const ARSIP_PREFIX='RO_CD_arsip_';
@@ -527,7 +552,94 @@ function muatSemuaDatalist(){
   muatDatalist(RIWAYAT_SUBJECT_KEY,'dl-subject');
   muatDatalist(RIWAYAT_DETAIL_KEY,'dl-detail');
   muatDatalist(RIWAYAT_KET_KEY,'dl-ket'); // [BARU]
-  muatDatalist(RIWAYAT_PETUGAS_KEY,'dl-petugas');
+}
+
+/* ========== [BARU] DAFTAR TERTUTUP PETUGAS ========== */
+// Pengganti datalist bebas: nama petugas sekarang HARUS dipilih dari daftar yang
+// dikelola lewat Pengaturan, bukan diketik bebas — supaya nama yang sama tidak
+// tersimpan dengan variasi ejaan berbeda (lihat diskusi celah #7).
+function getPetugasList(){
+  try{ const arr=JSON.parse(localStorage.getItem(PETUGAS_LIST_KEY)||'[]'); return Array.isArray(arr)?arr:[]; }
+  catch(e){ return []; }
+}
+function simpanPetugasList(list){
+  try{ localStorage.setItem(PETUGAS_LIST_KEY,JSON.stringify(list)); }catch(e){}
+}
+function tambahPetugas(){
+  const input=document.getElementById('input-petugas-baru');
+  const nama=input.value.trim();
+  if(!nama){toast('Nama tidak boleh kosong');return;}
+  const list=getPetugasList();
+  if(list.some(n=>n.toLowerCase()===nama.toLowerCase())){
+    toast('Nama itu sudah ada di daftar');return;
+  }
+  list.push(nama);
+  simpanPetugasList(list);
+  input.value='';
+  document.getElementById('status-petugas').textContent='✓ "'+nama+'" ditambahkan';
+  renderKelolaPetugas();
+  renderPilihanPetugasForm(); // [BARU] pill di form utama ikut diperbarui live
+  toast('Petugas ditambahkan');
+}
+function hapusPetugas(idx){
+  const list=getPetugasList();
+  const nama=list[idx];
+  if(nama===undefined)return;
+  if(!confirm(`Hapus "${nama}" dari daftar Petugas?\nEntry lama yang sudah memakai nama ini tidak akan berubah.`))return;
+  list.splice(idx,1);
+  simpanPetugasList(list);
+  renderKelolaPetugas();
+  renderPilihanPetugasForm();
+  toast('Petugas dihapus dari daftar');
+}
+function renderKelolaPetugas(){
+  const el=document.getElementById('list-petugas-kelola');
+  const list=getPetugasList();
+  if(!list.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--ink-faint)">Belum ada nama terdaftar.</div>';
+    return;
+  }
+  el.innerHTML=list.map((nama,i)=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;">
+      <span style="font-size:13px;color:var(--ink)">${esc(nama)}</span>
+      <button onclick="hapusPetugas(${i})" aria-label="Hapus ${esc(nama)}" style="background:none;border:none;color:var(--credit);cursor:pointer;padding:3px 6px;font-size:13px;line-height:1;"><i class="fi fi-rr-trash"></i></button>
+    </div>
+  `).join('');
+}
+// Render pill di form input utama
+function renderPilihanPetugasForm(){
+  const list=getPetugasList();
+  const el=document.getElementById('petugas-pills');
+  if(!list.length){
+    el.innerHTML='<div class="petugas-empty">Belum ada nama petugas terdaftar. Daftarkan minimal satu nama dulu lewat Pengaturan sebelum bisa menyimpan entry.<br><button type="button" class="btn btn-ghost" style="margin-top:8px" onclick="bukaPin(\'setting\')"><i class="fi fi-rr-settings"></i> Buka Pengaturan</button></div>';
+    selectedPetugas='';
+    updateBtnSimpanState();
+    return;
+  }
+  // Kalau petugas yang sebelumnya terpilih sudah dihapus dari daftar, batalkan pilihan
+  if(selectedPetugas && !list.includes(selectedPetugas)) selectedPetugas='';
+  // Default: lanjutkan petugas yang sama dengan entry terakhir (kalau masih ada di daftar) —
+  // memudahkan input berurutan oleh orang yang sama tanpa perlu pilih ulang tiap kali
+  if(!selectedPetugas && editId===null){
+    const lastPetugas=entries.length?entries[entries.length-1].petugas:'';
+    if(lastPetugas && list.includes(lastPetugas)) selectedPetugas=lastPetugas;
+  }
+  el.innerHTML=list.map((nama,i)=>`<button type="button" class="petugas-pill ${nama===selectedPetugas?'aktif':''}" onclick="pilihPetugas(${i})">${esc(nama)}</button>`).join('');
+  updateBtnSimpanState();
+}
+function pilihPetugas(idx){
+  const list=getPetugasList();
+  selectedPetugas=list[idx]||'';
+  renderPilihanPetugasForm();
+}
+// [BARU] Tombol Simpan dinonaktifkan total kalau belum ada Petugas terpilih/terdaftar —
+// mencegah error di awal (preventive), bukan menegur lewat alert() setelah submit (reaktif).
+function updateBtnSimpanState(){
+  const ok=!!selectedPetugas;
+  const btn=document.getElementById('btn-simpan');
+  const hint=document.getElementById('petugas-hint');
+  if(btn)btn.disabled=!ok;
+  if(hint)hint.style.display=ok?'none':'block';
 }
 
 /* ========== TANGGAL ========== */
@@ -547,6 +659,18 @@ function formatRibuan(el){
 }
 function unformatRibuan(val){
   return parseFloat(String(val).replace(/\./g,''))||0;
+}
+// [BARU] Validasi inline Debit/Kredit: begitu salah satu field ada isinya, field lawan
+// langsung terkunci (disabled) — mencegah keduanya terisi dari awal, bukan baru ditegur
+// lewat alert() setelah tombol Simpan ditekan (lihat diskusi celah #2).
+function syncDebitKredit(){
+  const debEl=document.getElementById('f-debit');
+  const kreEl=document.getElementById('f-kredit');
+  if(!debEl||!kreEl)return;
+  const adaDebit=unformatRibuan(debEl.value)>0;
+  const adaKredit=unformatRibuan(kreEl.value)>0;
+  kreEl.disabled=adaDebit;
+  debEl.disabled=adaKredit;
 }
 
 /* ========== ARSIP ========== */
@@ -765,8 +889,14 @@ function submitEntry(){
   const ket=document.getElementById('f-ket').value.trim();
   const deb=unformatRibuan(document.getElementById('f-debit').value);
   const kre=unformatRibuan(document.getElementById('f-kredit').value);
-  const pet=document.getElementById('f-petugas').value.trim();
+  const pet=selectedPetugas; // [DIUBAH] dari free-text f-petugas, sekarang dari pill terpilih
   const tgl=todayStr;
+  // [BARU] Petugas wajib dipilih dulu — sudah dicegah lewat tombol Simpan yang disabled
+  // (updateBtnSimpanState), tapi tetap dijaga di sini sebagai pengaman kedua.
+  if(!pet){alert('Pilih nama Petugas terlebih dahulu (atau daftarkan dulu lewat Pengaturan).');return;}
+  // [Pengaman kedua] Debit & Kredit sudah saling mengunci secara inline (syncDebitKredit),
+  // jadi kondisi keduanya terisi seharusnya tidak tercapai lagi lewat alur normal — tapi
+  // pengecekan ini tetap dipertahankan sebagai pengaman.
   if(deb>0&&kre>0){alert('Debit dan Kredit tidak boleh keduanya terisi pada satu entry yang sama. Pilih salah satu.');return;}
   if(!subj&&!det){alert('Mohon isi minimal Subject atau Detail.');return;}
   // [BARU] validasi nominal wajar — berlaku untuk entry baru maupun edit
@@ -784,10 +914,11 @@ function submitEntry(){
   tambahRiwayatTerm(RIWAYAT_SUBJECT_KEY,subj);
   tambahRiwayatTerm(RIWAYAT_DETAIL_KEY,det);
   tambahRiwayatTerm(RIWAYAT_KET_KEY,ket); // [BARU]
-  tambahRiwayatTerm(RIWAYAT_PETUGAS_KEY,pet);
   muatSemuaDatalist();
   calcSaldo();updateSummary();renderList();saveState();
   ['f-subject','f-detail','f-ket','f-debit','f-kredit'].forEach(id=>document.getElementById(id).value='');
+  syncDebitKredit(); // [BARU] re-enable kedua field nominal setelah form dikosongkan
+  // selectedPetugas SENGAJA tidak direset — biasanya entry berikutnya masih petugas yang sama
 }
 
 function duplikatEntry(id){
@@ -797,7 +928,10 @@ function duplikatEntry(id){
   document.getElementById('f-ket').value=e.ket;
   document.getElementById('f-debit').value=e.debit?e.debit.toLocaleString('id-ID'):'';
   document.getElementById('f-kredit').value=e.kredit?e.kredit.toLocaleString('id-ID'):'';
-  document.getElementById('f-petugas').value=e.petugas;
+  syncDebitKredit(); // [BARU]
+  // [DIUBAH] Petugas: pilih pill yang sesuai kalau nama itu masih ada di daftar tertutup
+  if(getPetugasList().includes(e.petugas))selectedPetugas=e.petugas;
+  renderPilihanPetugasForm();
   document.querySelector('.form').scrollIntoView({behavior:'smooth',block:'center'});
   toast('Data disalin ke form — sesuaikan nominal lalu Simpan');
 }
@@ -810,7 +944,13 @@ function editEntry(id){
   document.getElementById('f-ket').value=e.ket;
   document.getElementById('f-debit').value=e.debit?e.debit.toLocaleString('id-ID'):'';
   document.getElementById('f-kredit').value=e.kredit?e.kredit.toLocaleString('id-ID'):'';
-  document.getElementById('f-petugas').value=e.petugas;
+  syncDebitKredit(); // [BARU]
+  // [DIUBAH] Petugas: pilih pill yang sesuai kalau nama itu masih ada di daftar tertutup.
+  // Kalau entry lama ini memakai nama yang sudah tidak ada di daftar (data lama dibiarkan
+  // apa adanya, lihat diskusi celah #7), tidak ada pill yang otomatis terpilih — harus
+  // dipilih ulang dari daftar yang berlaku sekarang sebelum bisa disimpan.
+  selectedPetugas=getPetugasList().includes(e.petugas)?e.petugas:'';
+  renderPilihanPetugasForm();
   document.getElementById('btn-label').textContent='Update Entry';
   document.getElementById('form-title').textContent='Edit Transaksi';
   document.getElementById('btn-cancel').style.display='flex';
@@ -830,6 +970,9 @@ function exitEditMode(){
 function cancelEdit(){
   exitEditMode();
   ['f-subject','f-detail','f-ket','f-debit','f-kredit'].forEach(id=>document.getElementById(id).value='');
+  syncDebitKredit(); // [BARU]
+  selectedPetugas=''; // [BARU] reset, biar renderPilihanPetugasForm pilih ulang default yang wajar
+  renderPilihanPetugasForm();
   renderList();
 }
 
@@ -1402,6 +1545,7 @@ function bukaPanel(){
   const nomor=getNomorWA();
   if(outlet)document.getElementById('input-outlet').value=outlet;
   if(nomor)document.getElementById('input-nomor-wa').value=nomor;
+  renderKelolaPetugas(); // [BARU]
   document.getElementById('panel-overlay').classList.add('show');
 }
 
@@ -1426,5 +1570,7 @@ calcSaldo();
 updateSummary(); // [DIUBAH] updateSummary() kini juga memanggil updateBackupReminder() di dalamnya
 renderList();
 muatSemuaDatalist();
+renderPilihanPetugasForm(); // [BARU]
+syncDebitKredit(); // [BARU]
 </script>
 </html>
