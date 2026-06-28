@@ -116,6 +116,9 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 .entry .acts .del{color:var(--brand)}
 .entry .acts .del:hover{background:var(--brand);color:#fff;border-color:var(--brand)}
 .empty{text-align:center;color:var(--ink-faint);font-size:12.5px;padding:34px 0;line-height:1.6}
+/* [BARU] Tombol toggle daftar entry (lihat semua / lebih sedikit) */
+.btn-lihat-semua{margin-top:16px}
+.btn-lihat-semua i{font-size:13px}
 .empty .big{display:block;font-size:13px;color:var(--ink-soft);font-weight:500;margin-bottom:3px}
 /* Send */
 .send{margin-top:30px}
@@ -260,7 +263,8 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
   </div>
   <div class="field">
     <label>Keterangan</label>
-    <textarea id="f-ket" placeholder="1 kg, harga eceran, dll"></textarea>
+    <input type="text" id="f-ket" placeholder="1 kg, harga eceran, dll" list="dl-ket">
+    <datalist id="dl-ket"></datalist>
   </div>
   <div class="field pair">
     <div>
@@ -420,6 +424,7 @@ const WA_KEY='RO_CD_wa';
 const OUTLET_KEY='RO_CD_outlet';
 const RIWAYAT_SUBJECT_KEY='RO_CD_riwayat_subject';
 const RIWAYAT_DETAIL_KEY='RO_CD_riwayat_detail';
+const RIWAYAT_KET_KEY='RO_CD_riwayat_ket'; // [BARU]
 const RIWAYAT_PETUGAS_KEY='RO_CD_riwayat_petugas';
 const LAST_BACKUP_KEY='RO_CD_last_backup';
 const BACKUP_REMINDER_HARI=7;
@@ -473,6 +478,7 @@ function muatDatalist(key,elId){
 function muatSemuaDatalist(){
   muatDatalist(RIWAYAT_SUBJECT_KEY,'dl-subject');
   muatDatalist(RIWAYAT_DETAIL_KEY,'dl-detail');
+  muatDatalist(RIWAYAT_KET_KEY,'dl-ket'); // [BARU]
   muatDatalist(RIWAYAT_PETUGAS_KEY,'dl-petugas');
 }
 
@@ -608,16 +614,31 @@ function updateBadgeExport(){
 }
 
 /* ========== RENDER LIST ========== */
+// [DIUBAH] Entry terbaru ditampilkan di atas (tidak perlu scroll ke bawah untuk
+// lihat/edit input baru), dan defaultnya hanya 5 entry terakhir yang dirender —
+// sisanya di balik tombol "Lihat semua" agar daftar 10+ transaksi/hari tidak
+// langsung jadi scroll panjang. Nomor urut (idx) tetap mengikuti urutan transaksi
+// asli (kronologis), bukan urutan tampil, supaya tidak membingungkan saat dicek ulang.
+const LIST_DEFAULT_COUNT=5;
+let listExpanded=false;
+function toggleListExpanded(){
+  listExpanded=!listExpanded;
+  renderList();
+}
 function renderList(){
   const el=document.getElementById('entry-list');
   if(!entries.length){
     el.innerHTML='<div class="empty"><span class="big">Belum ada entry</span>Silakan input transaksi pertama di atas.</div>';
     return;
   }
-  el.innerHTML=entries.map((e,i)=>`
+  const berNomor=entries.map((e,i)=>({...e,_no:i+1}));
+  const terbaruDulu=berNomor.slice().reverse();
+  const tampilkanSemua=listExpanded||terbaruDulu.length<=LIST_DEFAULT_COUNT;
+  const list=tampilkanSemua?terbaruDulu:terbaruDulu.slice(0,LIST_DEFAULT_COUNT);
+  const itemsHtml=list.map(e=>`
     <div class="entry ${editId===e.id?'editing':''}">
       <div class="top">
-        <span class="idx">${String(i+1).padStart(2,'0')}</span>
+        <span class="idx">${String(e._no).padStart(2,'0')}</span>
         <div class="body">
           <div class="subject">${esc(e.subject)||'—'}</div>
           <div class="detail">${esc(e.detail)}${e.ket?' · '+esc(e.ket):''}</div>
@@ -635,6 +656,13 @@ function renderList(){
       </div>
     </div>
   `).join('');
+  const toggleHtml=terbaruDulu.length>LIST_DEFAULT_COUNT
+    ?`<button class="btn btn-ghost btn-lihat-semua" onclick="toggleListExpanded()">
+        <i class="fi fi-rr-${tampilkanSemua?'angle-small-up':'angle-small-down'}"></i>
+        ${tampilkanSemua?'Tampilkan lebih sedikit':`Lihat semua (${terbaruDulu.length})`}
+      </button>`
+    :'';
+  el.innerHTML=itemsHtml+toggleHtml;
 }
 
 /* ========== [BARU] VALIDASI NOMINAL WAJAR ========== */
@@ -707,6 +735,7 @@ function submitEntry(){
   exportedExcel=false;exportedWA=false;
   tambahRiwayatTerm(RIWAYAT_SUBJECT_KEY,subj);
   tambahRiwayatTerm(RIWAYAT_DETAIL_KEY,det);
+  tambahRiwayatTerm(RIWAYAT_KET_KEY,ket); // [BARU]
   tambahRiwayatTerm(RIWAYAT_PETUGAS_KEY,pet);
   muatSemuaDatalist();
   calcSaldo();updateSummary();renderList();saveState();
@@ -777,6 +806,7 @@ function autoArsipkanJikaGantiHari(){
   catch(e){}
   const jumlah=entries.length;
   entries=[];idCounter=1;exportedExcel=false;exportedWA=false;
+  listExpanded=false; // [BARU] hari baru -> daftar mulai ringkas lagi
   saveState();
   invalidateCacheSaldoAwal(); // [BARU] arsip baru terbentuk -> saldo awal hari ini berubah
   toast(`Hari baru terdeteksi — ${jumlah} entry tanggal ${tglData} diarsipkan otomatis.`);
