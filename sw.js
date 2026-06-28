@@ -1,4 +1,4 @@
-const CACHE = 'chickenday-v1.0.2'; // [DIUBAH] dinaikkan agar perangkat ter-install dapat update (cache saldo awal, reminder backup, validasi nominal)
+const CACHE = 'chickenday-v1.0.3'; // [DIUBAH] dinaikkan agar perangkat ter-install dapat update (cache saldo awal, reminder backup, validasi nominal)
 const ASSETS = [
   './',
   './index.html',
