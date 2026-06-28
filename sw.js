@@ -1,4 +1,4 @@
-const CACHE = 'chickenday-v1.0.3'; // [DIUBAH] dinaikkan agar perangkat ter-install dapat update (cache saldo awal, reminder backup, validasi nominal)
+const CACHE = 'chickenday-v1.1.1'; // [DIUBAH] dialog konfirmasi sebelum backup .json + fix z-index modal nama file/backup yang ketutup panel Pengaturan
 const ASSETS = [
   './',
   './index.html',
