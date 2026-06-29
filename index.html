@@ -184,7 +184,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 .panel-overlay{position:fixed;inset:0;background:rgba(43,33,24,0.5);z-index:150;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(2px)}
 /* [DIUBAH] modal-filename & modal-backup bisa dipicu dari DALAM panel Pengaturan (z-index 150),
    jadi z-index-nya harus lebih tinggi dari panel-overlay, bukan ikut default .modal-bg (100) */
-#modal-filename,#modal-backup{z-index:220}
+#modal-filename,#modal-backup,#modal-hapus-semua,#modal-nominal-anomali,#modal-hapus-petugas{z-index:220}
 .panel-overlay.show{display:flex}
 .panel{background:var(--card);border-radius:20px 20px 0 0;padding:22px 20px 36px;width:100%;max-width:440px;max-height:88vh;overflow-y:auto}
 .panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
@@ -333,7 +333,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
     <button class="send-btn send-xl" onclick="downloadXLSX()"><i class="fi fi-rr-file-excel"></i><span>Excel</span></button>
   </div>
   <div class="wa-locked-hint" id="wa-locked-hint" style="display:none">Export Excel dulu untuk mengaktifkan kirim WhatsApp</div>
-  <div class="wa-nomor-wrap">
+  <div class="wa-nomor-wrap" style="display:none">
     <span>Nomor WA admin:</span>
     <b id="wa-nomor-tampil">Belum diatur</b>
     <button class="wa-ubah" onclick="bukaPin('setting')">Ubah</button>
@@ -341,14 +341,44 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,s
 </div>
 </div>
 
-<!-- Modal hapus -->
-<div class="modal-bg" id="modal-del">
+<!-- Modal hapus entry dihapus — diganti snackbar undo saja (lihat #snackbar-undo di bawah) -->
+
+<!-- Modal hapus semua data — custom, dengan konfirmasi ketik "HAPUS" -->
+<div class="modal-bg" id="modal-hapus-semua">
   <div class="modal">
-    <h3>Hapus Entry?</h3>
-    <p>Entry ini akan dihapus permanen dari daftar.</p>
+    <h3 style="color:var(--credit)"><i class="fi fi-rr-trash"></i> Hapus Semua Data?</h3>
+    <p id="modal-hapus-semua-desc" style="margin-bottom:14px">Seluruh data dari semua hari akan dihapus permanen. Tindakan ini <strong>tidak bisa dibatalkan</strong>.</p>
+    <div class="field" style="margin-bottom:16px;text-align:left">
+      <label style="color:var(--credit)">Ketik <strong>HAPUS</strong> untuk mengkonfirmasi</label>
+      <input type="text" id="input-konfirmasi-hapus" placeholder="HAPUS" autocomplete="off" oninput="updateBtnHapusSemua()" style="border-color:var(--line);letter-spacing:0.08em">
+    </div>
     <div class="modal-btns">
-      <button onclick="closeModal()">Batal</button>
-      <button class="confirm" onclick="confirmDelete()">Hapus</button>
+      <button onclick="tutupModalHapusSemua()">Batal</button>
+      <button class="confirm" id="btn-konfirmasi-hapus-semua" disabled onclick="eksekusiHapusSemua()" style="opacity:0.4;cursor:not-allowed">Hapus Semua</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal validasi nominal anomali — custom, menggantikan confirm() bawaan browser -->
+<div class="modal-bg" id="modal-nominal-anomali">
+  <div class="modal">
+    <h3><i class="fi fi-rr-exclamation"></i> Cek Nominal</h3>
+    <p id="modal-nominal-text" style="margin-bottom:20px">Nominal ini jauh di atas rata-rata historis. Yakin nominalnya benar?</p>
+    <div class="modal-btns">
+      <button onclick="jawabNominalAnomali(false)">Koreksi</button>
+      <button class="confirm-primary" onclick="jawabNominalAnomali(true)">Tetap Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal hapus nama petugas — custom, menggantikan confirm() bawaan browser -->
+<div class="modal-bg" id="modal-hapus-petugas">
+  <div class="modal">
+    <h3>Hapus Petugas?</h3>
+    <p id="modal-hapus-petugas-desc" style="margin-bottom:20px">Nama ini akan dihapus dari daftar. Entry lama yang memakai nama ini tidak akan berubah.</p>
+    <div class="modal-btns">
+      <button onclick="tutupModalHapusPetugas()">Batal</button>
+      <button class="confirm" onclick="eksekusiHapusPetugas()">Hapus</button>
     </div>
   </div>
 </div>
@@ -581,11 +611,26 @@ function tambahPetugas(){
   renderPilihanPetugasForm(); // [BARU] pill di form utama ikut diperbarui live
   toast('Petugas ditambahkan');
 }
+let _hapusPetugasIdx=null;
 function hapusPetugas(idx){
   const list=getPetugasList();
   const nama=list[idx];
   if(nama===undefined)return;
-  if(!confirm(`Hapus "${nama}" dari daftar Petugas?\nEntry lama yang sudah memakai nama ini tidak akan berubah.`))return;
+  _hapusPetugasIdx=idx;
+  document.getElementById('modal-hapus-petugas-desc').innerHTML=
+    `Nama <strong>"${nama}"</strong> akan dihapus dari daftar. Entry lama yang memakai nama ini tidak akan berubah.`;
+  document.getElementById('modal-hapus-petugas').classList.add('show');
+}
+function tutupModalHapusPetugas(){
+  document.getElementById('modal-hapus-petugas').classList.remove('show');
+  _hapusPetugasIdx=null;
+}
+function eksekusiHapusPetugas(){
+  const idx=_hapusPetugasIdx;
+  tutupModalHapusPetugas();
+  if(idx===null)return;
+  const list=getPetugasList();
+  if(idx>=list.length)return;
   list.splice(idx,1);
   simpanPetugasList(list);
   renderKelolaPetugas();
@@ -870,16 +915,26 @@ function updateStatNominal(deb,kre){
   if(kre>0){stat.kredit.count++;stat.kredit.sum+=kre;}
   try{localStorage.setItem(STAT_NOMINAL_KEY,JSON.stringify(stat));}catch(e){}
 }
-// true = boleh lanjut simpan. false = user membatalkan setelah lihat peringatan.
-function cekNominalWajar(jenis,nilai){
-  if(!(nilai>0))return true;
+// Modal-based validasi nominal — async via callback, menggantikan confirm() bawaan browser
+let _nominalCallback=null;
+function cekNominalWajar(jenis,nilai,onLanjut){
+  if(!(nilai>0)){onLanjut();return;}
   const stat=getStatNominal();
   const s=stat[jenis];
-  if(!s||s.count<NOMINAL_MIN_SAMPLE)return true; // data historis belum cukup, jangan ganggu
+  if(!s||s.count<NOMINAL_MIN_SAMPLE){onLanjut();return;}
   const rata=s.sum/s.count;
-  if(rata<=0||nilai<=rata*NOMINAL_MULTIPLIER)return true;
+  if(rata<=0||nilai<=rata*NOMINAL_MULTIPLIER){onLanjut();return;}
   const label=jenis==='debit'?'Debit':'Kredit';
-  return confirm(`Nominal ${label} ${fmtRp(nilai)} jauh di atas rata-rata historis (${fmtRp(Math.round(rata))}).\nCek lagi — yakin nominalnya benar?\n\nOK = tetap simpan, Batal = koreksi nominal.`);
+  document.getElementById('modal-nominal-text').innerHTML=
+    `Nominal <strong>${label} ${fmtRp(nilai)}</strong> jauh di atas rata-rata historis (<strong>${fmtRp(Math.round(rata))}</strong>).<br><br>Cek lagi — yakin nominalnya benar?`;
+  _nominalCallback=onLanjut;
+  document.getElementById('modal-nominal-anomali').classList.add('show');
+}
+function jawabNominalAnomali(lanjut){
+  document.getElementById('modal-nominal-anomali').classList.remove('show');
+  const cb=_nominalCallback;_nominalCallback=null;
+  if(lanjut&&cb)cb();
+  // kalau tidak lanjut, form tetap terbuka untuk koreksi
 }
 
 /* ========== FORM ========== */
@@ -899,9 +954,15 @@ function submitEntry(){
   // pengecekan ini tetap dipertahankan sebagai pengaman.
   if(deb>0&&kre>0){alert('Debit dan Kredit tidak boleh keduanya terisi pada satu entry yang sama. Pilih salah satu.');return;}
   if(!subj&&!det){alert('Mohon isi minimal Subject atau Detail.');return;}
-  // [BARU] validasi nominal wajar — berlaku untuk entry baru maupun edit
-  if(!cekNominalWajar('debit',deb))return;
-  if(!cekNominalWajar('kredit',kre))return;
+  // validasi nominal wajar — kini async (modal custom), bukan blocking confirm()
+  cekNominalWajar('debit',deb,()=>{
+    cekNominalWajar('kredit',kre,()=>{
+      _simpanEntry(subj,det,ket,deb,kre,pet,tgl);
+    });
+  });
+}
+
+function _simpanEntry(subj,det,ket,deb,kre,pet,tgl){
   if(editId!==null){
     const idx=entries.findIndex(e=>e.id===editId);
     if(idx>-1)entries[idx]={...entries[idx],tanggal:tgl,subject:subj,detail:det,ket,debit:deb,kredit:kre,petugas:pet};
@@ -976,18 +1037,22 @@ function cancelEdit(){
   renderList();
 }
 
-/* ========== DELETE ========== */
-function askDelete(id){deleteId=id;document.getElementById('modal-del').classList.add('show');}
-function closeModal(){deleteId=null;document.getElementById('modal-del').classList.remove('show');}
+/* ========== DELETE — snackbar undo saja, tanpa modal konfirmasi ========== */
+function askDelete(id){
+  // Langsung hapus, tanpa modal — snackbar undo 5 detik sebagai satu-satunya safety net
+  deleteId=id;
+  confirmDelete();
+}
+function closeModal(){deleteId=null;} // dipertahankan kalau ada pemanggilan lain
 function confirmDelete(){
   const wasEditing=editId===deleteId;
   const idx=entries.findIndex(e=>e.id===deleteId);
-  if(idx===-1){closeModal();return;}
+  if(idx===-1){deleteId=null;return;}
   const entryTerhapus=entries[idx]; // [BARU] disimpan untuk fitur undo
   entries=entries.filter(e=>e.id!==deleteId);
   if(wasEditing)cancelEdit();
   exportedExcel=false;exportedWA=false;
-  calcSaldo();updateSummary();renderList();closeModal();saveState();
+  calcSaldo();updateSummary();renderList();deleteId=null;saveState();
   // [BARU] Snackbar undo — entry sudah benar2 terhapus & tersimpan (aman kalau app ditutup),
   // tapi masih bisa dikembalikan 5 detik lewat tombol Urungkan.
   _entryTerhapusBuffer={entry:entryTerhapus,index:idx};
@@ -1264,16 +1329,37 @@ function restoreJSON(event){
   reader.readAsText(file);
 }
 
+/* ========== HAPUS SEMUA DATA — modal custom dengan konfirmasi ketik HAPUS ========== */
 function hapusSemuaData(){
   const arsipKeys=getAllArsipKeys();
   const total=arsipKeys.length+(entries.length?1:0);
-  if(!total){toast('Tidak ada data');return;}
-  if(!confirm(`Hapus SEMUA data (${total} hari)?\nPastikan sudah backup terlebih dahulu.\n\nTidak bisa dibatalkan.`))return;
+  if(!total){toast('Tidak ada data untuk dihapus');return;}
+  document.getElementById('modal-hapus-semua-desc').innerHTML=
+    `Seluruh data dari <strong>${total} hari</strong> akan dihapus permanen. Tindakan ini <strong>tidak bisa dibatalkan</strong>.`;
+  document.getElementById('input-konfirmasi-hapus').value='';
+  const btn=document.getElementById('btn-konfirmasi-hapus-semua');
+  btn.disabled=true;btn.style.opacity='0.4';btn.style.cursor='not-allowed';
+  document.getElementById('modal-hapus-semua').classList.add('show');
+  setTimeout(()=>document.getElementById('input-konfirmasi-hapus').focus(),200);
+}
+function updateBtnHapusSemua(){
+  const val=document.getElementById('input-konfirmasi-hapus').value.trim().toUpperCase();
+  const btn=document.getElementById('btn-konfirmasi-hapus-semua');
+  const ok=val==='HAPUS';
+  btn.disabled=!ok;btn.style.opacity=ok?'1':'0.4';btn.style.cursor=ok?'pointer':'not-allowed';
+}
+function tutupModalHapusSemua(){
+  document.getElementById('modal-hapus-semua').classList.remove('show');
+  document.getElementById('input-konfirmasi-hapus').value='';
+}
+function eksekusiHapusSemua(){
+  tutupModalHapusSemua();
+  const arsipKeys=getAllArsipKeys();
   arsipKeys.forEach(k=>localStorage.removeItem(k));
   localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(STAT_NOMINAL_KEY); // [BARU] statistik nominal ikut direset
+  localStorage.removeItem(STAT_NOMINAL_KEY);
   entries=[];idCounter=1;exportedExcel=false;exportedWA=false;
-  invalidateCacheSaldoAwal(); // [BARU]
+  invalidateCacheSaldoAwal();
   calcSaldo();updateSummary();renderList();
   toast('Semua data dihapus');
 }
