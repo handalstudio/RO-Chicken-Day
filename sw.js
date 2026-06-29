@@ -1,4 +1,4 @@
-const CACHE = 'chickenday-v1.2.0'; // [DIUBAH] Petugas jadi daftar tertutup (pill, dikelola di Pengaturan) + Debit/Kredit saling mengunci inline
+const CACHE = 'chickenday-v1.2.1'; // [DIUBAH] Petugas jadi daftar tertutup (pill, dikelola di Pengaturan) + Debit/Kredit saling mengunci inline
 const ASSETS = [
   './',
   './index.html',
